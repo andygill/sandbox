@@ -1,5 +1,5 @@
 {-# LANGUAGE GADTs, KindSignatures, FlexibleInstances, RankNTypes,
-             StandaloneDeriving, ConstraintKinds, FlexibleContexts, OverloadedStrings
+             StandaloneDeriving, ConstraintKinds, FlexibleContexts, OverloadedStrings, ScopedTypeVariables
   #-}
 
 import Data.Aeson
@@ -17,29 +17,38 @@ class (ToJSON e, Show e) => Effector e where
 
 class Rewriter r where
    toRewriter :: r a -> a -> IO a
+   
+--instance Rewriter rr => ToJSON (
 
 data TypedEffectH :: * where
-  EffectH                :: Effector  e   => e                   -> TypedEffectH
-  RewriteInt             :: Rewriter  rr  => rr Int              -> TypedEffectH
-{-
-    RewriteLCore           :: Rewriter  rr  => rr LCore            -> TypedEffectH
-  TransformLCorePathBoxH :: Transformer t => t LCore LocalPathH -> TypedEffectH
--}
+  EffectH                :: Effector  e                          => e -> TypedEffectH
+  RewriteInt             :: (e ~ rr Int, Show e, ToJSON e, Rewriter rr)  => e -> TypedEffectH
 
 ------------------------------------------------------------------      
 
 instance Show TypedEffectH where
   show (EffectH e) = show e
+  show (RewriteInt e) = show e
   
 instance ToJSON TypedEffectH where
-  toJSON (EffectH e) = tagged "TypedEffectH" "EffectH" [toJSON e]
+  toJSON (EffectH e)    = tagged "TypedEffectH" "EffectH" [toJSON e]
+  toJSON (RewriteInt e) = tagged "TypedEffectH" "RewriteInt" [toJSON e]
 
 instance FromJSON TypedEffectH where
   parseJSON (Array a) = case V.toList a of
-    ["TypedEffectH","EffectH",e] -> 
-      EffectH <$> (parseJSON e :: Parser Effects    ) <|>
-      EffectH <$> (parseJSON e :: Parser MoreEffects)
+    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
+    ["TypedEffectH","RewriteInt",e] -> parseRewriterInt e (Proxy :: Proxy Int) RewriteInt
     _ -> mzero
+
+parseEffector :: Value -> (forall a . Effector a => a -> k) -> Parser k
+parseEffector e k = 
+      k <$> (parseJSON e :: Parser Effects    ) <|>
+      k <$> (parseJSON e :: Parser MoreEffects)
+
+parseRewriterInt :: forall a k . (FromJSON (RewriteMe a))
+                 => Value -> Proxy a -> (forall rr . (Show (rr a), ToJSON (rr a), Rewriter rr) => rr a -> k) -> Parser k
+parseRewriterInt e Proxy k = 
+      k <$> (parseJSON e :: Parser (RewriteMe a))
 
 ------------------------------------------------------------------      
 
@@ -78,9 +87,47 @@ instance FromJSON MoreEffects where
 
 ------------------------------------------------------------------      
     
+data RewriteMe :: * -> * where
+  RewriteTheFirst  :: RewriteMe Int
+  RewriteTheSecond :: String -> RewriteMe Bool
+
+deriving instance Show (RewriteMe a)
+
+instance Rewriter RewriteMe where
+   toRewriter RewriteTheFirst        n = return $ n + 1
+   toRewriter (RewriteTheSecond msg) b = do
+           print msg
+           return $ not b
+
+instance FromJSON (RewriteMe Int) where
+  parseJSON (Array e) = case V.toList e of
+    ["RewriteMe","RewriteTheFirst"] -> return $ RewriteTheFirst
+    _ -> mzero
+
+instance FromJSON (RewriteMe Bool) where
+  parseJSON (Array e) = case V.toList e of
+    ["RewriteMe","RewriteTheFirst",e] -> liftM RewriteTheSecond $ parseJSON e
+    _ -> mzero
+
+instance ToJSON (RewriteMe a) where
+  toJSON  RewriteTheFirst        = enum "RewriteMe" "RewriteTheFirst"
+  toJSON (RewriteTheSecond str) = tagged "RewriteMe" "RewriteTheSecond" [toJSON str]
+
+
+
+------------------------------------------------------------------      
 
 effect1 :: Effects
 effect1 = Effect1
+
+effect2 :: MoreEffects
+effect2 = Effect2
+
+theFirst :: RewriteMe Int
+theFirst = RewriteTheFirst
+
+theSecond :: String -> RewriteMe Bool
+theSecond = RewriteTheSecond
 
 ------------------------------------
 
@@ -95,4 +142,6 @@ transmit e = fromJSON (toJSON e)
 
 main = do
         print $ transmit $ EffectH $ effect1
+        print $ transmit $ EffectH $ effect2
+        print $ transmit $ RewriteInt $ theFirst
 
