@@ -1,7 +1,7 @@
-{-# LANGUAGE GADTs, KindSignatures, FlexibleInstances, RankNTypes,
-             StandaloneDeriving, ConstraintKinds, FlexibleContexts, OverloadedStrings, ScopedTypeVariables
-  #-}
-
+{-# LANGUAGE GADTs, KindSignatures, FlexibleInstances, RankNTypes, 
+             StandaloneDeriving, ConstraintKinds, FlexibleContexts, OverloadedStrings, ScopedTypeVariables, LiberalTypeSynonyms
+            ,  UndecidableInstances
+ #-}
 import Data.Aeson
 import Data.Text
 import qualified Data.Vector as V
@@ -14,35 +14,38 @@ import Control.Applicative
 
 import GHC.Exts
 
-class (ToJSON e, Show e) => Effector e where
+class (ToJSON e) => Effector e where
    toEffectH :: (Monad m, m ~ IO) => e -> m ()
 
 class Rewriter r where
    toRewriter :: r a -> a -> IO a
    
---instance Rewriter rr => ToJSON (
-
 data TypedEffectH :: (* -> Constraint) -> * where
-  EffectH                :: (c e, Effector  e)                           => e -> TypedEffectH c
-  RewriteInt             :: (e ~ rr Int, Show e, ToJSON e, Rewriter rr)  => e -> TypedEffectH c
+  EffectH                :: (c e, Effector  e)              => e -> TypedEffectH c
+  RewriteInt             :: (c e, Rewriter rr, e ~ rr Int)  => e -> TypedEffectH c
 
 ------------------------------------------------------------------      
 
-instance Show (TypedEffectH c) where
+class (Show a, ToJSON a) => C a
+instance (Show a, ToJSON a) => C a
+
+------------------------------------------------------------------      
+
+instance Show (TypedEffectH C) where
   show (EffectH e) = show e
   show (RewriteInt e) = show e
   
-instance ToJSON (TypedEffectH c) where
-  toJSON (EffectH e)    = tagged "TypedEffectH" "EffectH" [toJSON e]
+instance ToJSON (TypedEffectH C) where
+  toJSON (EffectH e)    = tagged "TypedEffectH" "EffectH"    [toJSON e]
   toJSON (RewriteInt e) = tagged "TypedEffectH" "RewriteInt" [toJSON e]
 
-instance FromJSON (TypedEffectH c) where
+instance FromJSON (TypedEffectH C) where
   parseJSON (Array a) = case V.toList a of
---    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
+    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
     ["TypedEffectH","RewriteInt",e] -> parseRewriterInt e (Proxy :: Proxy Int) RewriteInt
     _ -> mzero
 
-parseEffector :: Value -> (forall a . Effector a => a -> k) -> Parser k
+parseEffector :: Value -> (forall a . (C a, Effector a) => a -> k) -> Parser k
 parseEffector e k = 
       k <$> (parseJSON e :: Parser Effects    ) <|>
       k <$> (parseJSON e :: Parser MoreEffects)
@@ -139,7 +142,7 @@ enum ty tag = toJSON [ty,tag]
 tagged :: String -> String -> [Value] -> Value
 tagged ty tag rest = Array $ V.fromList $ [toJSON ty, toJSON tag] ++ rest
 
-transmit :: TypedEffectH Show -> Result (TypedEffectH Show)
+transmit :: TypedEffectH C -> Result (TypedEffectH C)
 transmit e = fromJSON (toJSON e)
 
 main = do
