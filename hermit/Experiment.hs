@@ -12,6 +12,8 @@ import Data.Monoid
 import Data.Proxy
 import Control.Applicative
 
+import GHC.Exts
+
 class (ToJSON e, Show e) => Effector e where
    toEffectH :: (Monad m, m ~ IO) => e -> m ()
 
@@ -20,23 +22,23 @@ class Rewriter r where
    
 --instance Rewriter rr => ToJSON (
 
-data TypedEffectH :: * where
-  EffectH                :: Effector  e                          => e -> TypedEffectH
-  RewriteInt             :: (e ~ rr Int, Show e, ToJSON e, Rewriter rr)  => e -> TypedEffectH
+data TypedEffectH :: (* -> Constraint) -> * where
+  EffectH                :: (c e, Effector  e)                           => e -> TypedEffectH c
+  RewriteInt             :: (e ~ rr Int, Show e, ToJSON e, Rewriter rr)  => e -> TypedEffectH c
 
 ------------------------------------------------------------------      
 
-instance Show TypedEffectH where
+instance Show (TypedEffectH c) where
   show (EffectH e) = show e
   show (RewriteInt e) = show e
   
-instance ToJSON TypedEffectH where
+instance ToJSON (TypedEffectH c) where
   toJSON (EffectH e)    = tagged "TypedEffectH" "EffectH" [toJSON e]
   toJSON (RewriteInt e) = tagged "TypedEffectH" "RewriteInt" [toJSON e]
 
-instance FromJSON TypedEffectH where
+instance FromJSON (TypedEffectH c) where
   parseJSON (Array a) = case V.toList a of
-    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
+--    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
     ["TypedEffectH","RewriteInt",e] -> parseRewriterInt e (Proxy :: Proxy Int) RewriteInt
     _ -> mzero
 
@@ -137,11 +139,10 @@ enum ty tag = toJSON [ty,tag]
 tagged :: String -> String -> [Value] -> Value
 tagged ty tag rest = Array $ V.fromList $ [toJSON ty, toJSON tag] ++ rest
 
-transmit :: TypedEffectH -> Result TypedEffectH
+transmit :: TypedEffectH Show -> Result (TypedEffectH Show)
 transmit e = fromJSON (toJSON e)
 
 main = do
         print $ transmit $ EffectH $ effect1
         print $ transmit $ EffectH $ effect2
         print $ transmit $ RewriteInt $ theFirst
-
