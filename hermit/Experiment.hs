@@ -14,6 +14,8 @@ import Control.Applicative
 
 import GHC.Exts
 
+{- We're doing this all wrong! We do not need the src and dest to be the same structure -}
+
 class (ToJSON e) => Effector e where
    toEffectH :: (Monad m, m ~ IO) => e -> m ()
 
@@ -23,11 +25,18 @@ class Rewriter r where
 data TypedEffectH :: (* -> Constraint) -> * where
   EffectH                :: (c e, Effector  e)              => e -> TypedEffectH c
   RewriteInt             :: (c e, Rewriter rr, e ~ rr Int)  => e -> TypedEffectH c
+  RewriteBool            :: (c e, Rewriter rr, e ~ rr Bool) => e -> TypedEffectH c
 
 ------------------------------------------------------------------      
 
-class (Show a, ToJSON a) => C a
-instance (Show a, ToJSON a) => C a
+--newtype RewriteH :: * -> * where
+--  RewriteH
+
+
+------------------------------------------------------------------      
+
+class (Show a, ToJSON a, FromJSON a) => C a
+instance (Show a, ToJSON a, FromJSON a) => C a
 
 ------------------------------------------------------------------      
 
@@ -41,8 +50,9 @@ instance ToJSON (TypedEffectH C) where
 
 instance FromJSON (TypedEffectH C) where
   parseJSON (Array a) = case V.toList a of
-    ["TypedEffectH","EffectH",e]    -> parseEffector    e EffectH
-    ["TypedEffectH","RewriteInt",e] -> parseRewriterInt e (Proxy :: Proxy Int) RewriteInt
+    ["TypedEffectH","EffectH",e]     -> parseEffector e EffectH
+    ["TypedEffectH","RewriteInt",e]  -> parseRewriter e RewriteInt
+    ["TypedEffectH","RewriteBool",e] -> parseRewriter e RewriteBool
     _ -> mzero
 
 parseEffector :: Value -> (forall a . (C a, Effector a) => a -> k) -> Parser k
@@ -50,9 +60,10 @@ parseEffector e k =
       k <$> (parseJSON e :: Parser Effects    ) <|>
       k <$> (parseJSON e :: Parser MoreEffects)
 
-parseRewriterInt :: forall a k . (FromJSON (RewriteMe a))
-                 => Value -> Proxy a -> (forall rr . (Show (rr a), ToJSON (rr a), Rewriter rr) => rr a -> k) -> Parser k
-parseRewriterInt e Proxy k = 
+
+parseRewriter :: forall a k . (FromJSON (RewriteMe a))
+                 => Value -> (forall rr . (C (rr a), Rewriter rr) => rr a -> k) -> Parser k
+parseRewriter e k = 
       k <$> (parseJSON e :: Parser (RewriteMe a))
 
 ------------------------------------------------------------------      
@@ -118,8 +129,6 @@ instance ToJSON (RewriteMe a) where
   toJSON  RewriteTheFirst        = enum "RewriteMe" "RewriteTheFirst"
   toJSON (RewriteTheSecond str) = tagged "RewriteMe" "RewriteTheSecond" [toJSON str]
 
-
-
 ------------------------------------------------------------------      
 
 effect1 :: Effects
@@ -133,6 +142,21 @@ theFirst = RewriteTheFirst
 
 theSecond :: String -> RewriteMe Bool
 theSecond = RewriteTheSecond
+
+------------------------------------
+{-
+class Perform p where
+  perform :: p -> IO ()
+  
+instance Effector e => Perform e where
+   perform e = print ("Effector",toJSON e)
+
+instance (Rewriter rr, e ~ rr Int) => Perform e where
+   perform e = print ("Effector",toJSON e)
+-}
+--  EffectH                :: (c e, Effector  e)              => e -> TypedEffectH c
+--  RewriteInt             :: (c e, Rewriter rr, e ~ rr Int)  => e -> TypedEffectH c
+--  RewriteBool            :: (c e, Rewriter rr, e ~ rr Bool) => e -> TypedEffectH c
 
 ------------------------------------
 
